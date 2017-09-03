@@ -173,6 +173,10 @@ class EverjobsSpider(scrapy.Spider):
        		}
 	}
 	all_jobs_in_db = {}
+
+        page=1
+        
+        searchUrl = "https://www.everjobs.com.kh/en/jobs/?page="
         
 	def __init__(self, *args, **kwargs):
         	super(EverjobsSpider, self).__init__(*args, **kwargs)
@@ -185,18 +189,32 @@ class EverjobsSpider(scrapy.Spider):
 		for row in self.cursor.fetchall():
 			self.all_jobs_in_db[ row['jobID'] ] = ''
 
-        	yield Request(url="https://www.everjobs.com.kh/sitemap-job.xml", callback=self.parse_listing_page, headers=self.headers)
+                yield Request(url=self.searchUrl+str(self.page), callback=self.parse_listing_page, headers=self.headers)
 
 
-	def parse_listing_page(self, response):
-                results = re.findall(r"<loc>(.*)<\/loc>",response.body)
-             
-                for jobLink in results:
-                    if jobLink.split("/")[-1] in self.all_jobs_in_db:
-                        logging.info("%s already exists in DB. So skipping..."%(jobLink))
-                    else:
-                        yield Request(url=(jobLink), callback=self.parse_detail_page, headers=self.headers)
+        def parse_listing_page(self, response):
+            
+                results = response.css('.mobile-job-container[data-automation="jobseeker-jobs"]')
                 
+                if results:
+                    for comp in results:
+                            jobLink = comp.css(".headline3 a::attr(href)").extract_first().lstrip("/")
+                            
+                            jobLink = 'https://www.everjobs.com.kh/%s'%(jobLink)
+                            
+                            if jobLink.split("/")[-1].split(".html")[0] in self.all_jobs_in_db:
+                                logging.info("%s already exists in DB. So skipping..."%(jobLink))
+                            else:
+                                yield Request(url=jobLink, callback=self.parse_detail_page, headers=self.headers)
+	
+                    self.page = self.page + 1 
+                    next_page = self.searchUrl+str(self.page)
+                    logging.info("\n\n\nGoing to next page: %s"%(next_page))
+                    yield Request(url=next_page, callback=self.parse_listing_page, headers=self.headers)
+                
+                else:
+                    logging.info("\n\n\nwas last page"%(response.url))  
+                        
                         
 	def parse_detail_page(self, response):
             
@@ -209,7 +227,7 @@ class EverjobsSpider(scrapy.Spider):
 
                 data['jobUrl'] = response.url
                 data['positionTitle'] = response.css("#job-header h3::text").extract_first()
-                data['jobID'] = response.url.split("/")[-1]
+                data['jobID'] = response.url.split("/")[-1].split(".html")[0]
                 data['fullJobDescription'] = response.xpath("//h4[contains(text(),'Job Description')]/following-sibling::div[2]//text()").extract_first()
                 data['positionDescription'] = response.xpath("//h4[contains(text(),'Position Requirements')]/following-sibling::div[2]//text()").extract_first()
                 data['contractType'] = response.xpath("//dt[contains(text(),'Contract Type:')]/following-sibling::dd[1]//text()").extract_first()
