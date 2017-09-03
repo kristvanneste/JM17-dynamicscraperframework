@@ -6,6 +6,24 @@ from collections import OrderedDict
 
 from cambodiajobs.db_creds import DB_CREDS
 
+
+stripHTMLregex = re.compile(r'(<script\b[^>]*>([\s\S]*?)<\/script>)|(<style\b[^>]*>([\s\S]*?)<\/style>)')
+stripNonTelTags = re.compile(r'(<(?![^>]+tel:)(.|\n)*?>)')
+
+emailsregex = re.compile('[\w\.-]+@[\w-]+\.[\w\.-]+')
+mobilesregex = re.compile(r"(\(?(?<!\d)\d{3}\)?-? *\d{3}-? *-?\d{4})(?!\d)|(?<!\d)(\+\d{11})(?!\d)")
+
+
+def dedupeAndCleanList(_list):
+        cleaned_list = []
+
+        for item in _list:
+                        if isinstance(item, tuple):
+                                        item = ''.join(str(i.encode('utf-8')) for i in item) 
+                        if item not in cleaned_list:
+                                        cleaned_list.append(item)
+        return cleaned_list
+
 def connectDB():
 	conn = MySQLdb.connect(user=DB_CREDS['user'], passwd=DB_CREDS['pass'], db=DB_CREDS['db'], host=DB_CREDS['host'], charset="utf8", use_unicode=True)
 	cursor = MySQLdb.cursors.DictCursor(conn) 
@@ -34,7 +52,7 @@ class YpSpider(scrapy.Spider):
 	custom_settings = {
 		'DOWNLOADER_MIDDLEWARES': {
 		    'scrapy.downloadermiddlewares.httpproxy.HttpProxyMiddleware': 200,
-		    'cambodiajobs.middlewarees.ProxiesMiddleware': 300,
+		    'cambodiajobs.middlewares.ProxiesMiddleware': 300,
 		},
         	'ITEM_PIPELINES': {
                         'cambodiajobs.pipelines.Format': 1,
@@ -147,18 +165,14 @@ class EverjobsSpider(scrapy.Spider):
 	custom_settings = {
 		'DOWNLOADER_MIDDLEWARES': {
 		    'scrapy.downloadermiddlewares.httpproxy.HttpProxyMiddleware': 200,
-		    'cambodiajobs.middlewarees.ProxiesMiddleware': 300,
+		    'cambodiajobs.middlewares.ProxiesMiddleware': 300,
 		},
         	'ITEM_PIPELINES': {
                         'cambodiajobs.pipelines.Format': 1,
                         'cambodiajobs.pipelines.CambodiajobsPipeline': 200,
        		}
 	}
-	all_products_in_db = {}
-        
-        page=1
-        
-        searchUrl = "https://www.everjobs.com.kh/en/jobs/?page="
+	all_jobs_in_db = {}
         
 	def __init__(self, *args, **kwargs):
         	super(EverjobsSpider, self).__init__(*args, **kwargs)
@@ -169,59 +183,79 @@ class EverjobsSpider(scrapy.Spider):
 		self.cursor.execute(query)
 
 		for row in self.cursor.fetchall():
-			self.all_products_in_db[ row['jobID'] ] = ''
+			self.all_jobs_in_db[ row['jobID'] ] = ''
 
-        	yield Request(url=self.searchUrl+str(self.page), callback=self.parse_listing_page, headers=self.headers)
+        	yield Request(url="https://www.everjobs.com.kh/sitemap-job.xml", callback=self.parse_listing_page, headers=self.headers)
 
 
 	def parse_listing_page(self, response):
-            
-                results = response.css('.mobile-job-container[data-automation="jobseeker-jobs"]')
+                results = re.findall(r"<loc>(.*)<\/loc>",response.body)
+             
+                for jobLink in results:
+                    if jobLink.split("/")[-1] in self.all_jobs_in_db:
+                        logging.info("%s already exists in DB. So skipping..."%(jobLink))
+                    else:
+                        yield Request(url=(jobLink), callback=self.parse_detail_page, headers=self.headers)
                 
-                if results:
-                    for comp in results:
-                            jobLink = comp.css(".headline3 a::attr(href)").extract_first().lstrip("/")
-                            
-                            logging.info(jobLink)
-                            yield Request(url='https://www.everjobs.com.kh/%s'%(jobLink), callback=self.parse_detail_page, headers=self.headers)
-
-                    self.page = self.page + 1 
-                    next_page = self.searchUrl+str(self.page)
-                    logging.info("\n\n\nGoing to next page: %s"%(next_page))
-                    yield Request(url=next_page, callback=self.parse_listing_page, headers=self.headers)
-                
-                else:
-                    logging.info("\n\n\nwas last page"%(response.url))
-                    
                         
 	def parse_detail_page(self, response):
-                        
-                data = {}
+            
+            data = {}
                 
+            if "Sorry, this job was not found." in response.body:
+                logging.info("\n\n\n%s was removed"%(response.url))
+                
+            else:
+
+                data['jobUrl'] = response.url
                 data['positionTitle'] = response.css("#job-header h3::text").extract_first()
-                data['jobID'] = response.xpath("//p[contains(text(),'Reference:')]/strong//text()").extract_first()
-                data['fullJobDescription'] = response.xpath("//h4[contains(text(),'Job Description')]/following-sibling::div[2]").extract_first()
-                data['positionDescription'] = response.xpath("//h4[contains(text(),'Position Requirements')]/following-sibling::div[2]").extract_first()
+                data['jobID'] = response.url.split("/")[-1]
+                data['fullJobDescription'] = response.xpath("//h4[contains(text(),'Job Description')]/following-sibling::div[2]//text()").extract_first()
+                data['positionDescription'] = response.xpath("//h4[contains(text(),'Position Requirements')]/following-sibling::div[2]//text()").extract_first()
                 data['contractType'] = response.xpath("//dt[contains(text(),'Contract Type:')]/following-sibling::dd[1]//text()").extract_first()
                 data['sizeCompany'] = response.xpath("//dt[contains(text(),' Employees:')]/following-sibling::dd[1]//text()").extract_first()
                 data['locationCity'] = response.xpath("//dt[contains(text(),'City:')]/following-sibling::dd[1]//text()").extract_first()
                 data['locationCountry'] = response.xpath("//dt[contains(text(),'Job Location:')]/following-sibling::dd[1]//text()").extract_first()
-                
-                data['CategoryTags'] = [response.xpath("//dt[contains(text(),'Job Category:')]/following-sibling::dd[1]//text()").extract_first()]
-                
-                data['companyDescription'] = response.xpath("//h4[contains(text(),'About the Company')]/following-sibling::div[2]").extract_first()
-                
+
+                data['CategoryTags'] = [response.xpath("//dt[contains(text(),'Job category:')]/following-sibling::dd[1]//text()").extract_first()]
+                data['salaryRange'] = response.xpath("//dt[contains(text(),'Salary:')]/following-sibling::dd[1]//text()").extract_first()
+
+                data['companyDescription'] = response.xpath("//h4[contains(text(),'About the Company')]/following-sibling::div[2]//text()").extract_first()
+
                 data['skillsRequirements'] = response.xpath("//h4[contains(text(),'Professional Skills')]/../text()[last()]").extract_first()
                 data['languageSkillsRequirements'] = response.xpath("//h4[contains(text(),'Language Skills')]/../text()[last()]").extract_first()
-                
+
                 data['minEducationRequirements'] = response.xpath("//dt[contains(text(),'Degree:')]/following-sibling::dd[1]//text()").extract_first()
                 data['minExperienceRequirements'] = response.xpath("//dt[contains(text(),'Minimum years of experience:')]/following-sibling::dd[1]//text()").extract_first()
                 data['jobLevel'] = response.xpath("//dt[contains(text(),'Career level:')]/following-sibling::dd[1]//text()").extract_first()
                 data['ApplyURL'] = response.css(".apply-wrapper .btn-apply::attr(href)").extract_first()
-                
+
                 data['minQualificationRequirements']=[]
                 for exp in response.xpath("//li[contains(text(),'xperience')]"):
                     data['minQualificationRequirements'].extend([exp.xpath("text()").extract_first()])
-                    
+
+                data['emails']=[]
+                data['phones']=[]
+
+                lc_body = ''.join(response.xpath("//body").extract()) if response.xpath("//body").extract() else None
+
+                if lc_body:
+                    lc_body = lc_body.lower()
+
+                    lc_body = stripHTMLregex.sub("", lc_body)
+                    lc_body = stripNonTelTags.sub(" ", lc_body)
+
+                    emails = emailsregex.findall(lc_body)
+                    mobiles = mobilesregex.findall(lc_body)
+
+                    for email in emails: #fix errorneus email detection, its detecting strings such as blah@2x.jpg as emails
+                                    if email.split(".")[-1] in ['jpg', 'jpeg', 'png', 'bmp']:
+                                                    emails.remove(email)
+
+                    # clean and dedupe
+                    cleaned_emails = dedupeAndCleanList(emails);
+                    cleaned_mobiles = dedupeAndCleanList(mobiles);
+                    data['emails']=cleaned_emails
+                    data['phones']=cleaned_mobiles
+
                 yield data
-                

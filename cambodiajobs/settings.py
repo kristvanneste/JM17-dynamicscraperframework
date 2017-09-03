@@ -9,12 +9,7 @@ NEWSPIDER_MODULE = 'cambodiajobs.spiders'
 ROBOTSTXT_OBEY = True
 
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
-CONCURRENT_REQUESTS = 1
-
-# The download delay setting will honor only one of:
-CONCURRENT_REQUESTS_PER_DOMAIN = 16
-
-PROXIES_LIST = ['http://37.48.118.90:13042', 'http://83.149.70.159:13042']
+CONCURRENT_REQUESTS = 40
 
 # Enable and configure the AutoThrottle extension (disabled by default)
 # See http://doc.scrapy.org/en/latest/topics/autothrottle.html
@@ -28,3 +23,6 @@ PROXIES_LIST = ['http://37.48.118.90:13042', 'http://83.149.70.159:13042']
 #AUTOTHROTTLE_TARGET_CONCURRENCY = 1.0
 # Enable showing throttling stats for every response received:
 #AUTOTHROTTLE_DEBUG = False
+
+FEED_EXPORT_ENCODING = 'utf-8'
+FEED_FORMAT='json'

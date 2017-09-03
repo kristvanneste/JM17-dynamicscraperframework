@@ -60,7 +60,7 @@ class CambodiajobsPipeline(object):
             
                 rawItem = item.copy()
 
-                fieldsDumps = ["CategoryTags","minQualificationRequirements"]
+                fieldsDumps = ["CategoryTags","minQualificationRequirements", "emails", "phones"]
 
                 for field in fieldsDumps:
                     item[field]=json.dumps(item[field])
