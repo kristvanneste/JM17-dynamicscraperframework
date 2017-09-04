@@ -206,7 +206,7 @@ class EverjobsSpider(scrapy.Spider):
                                 logging.info("%s already exists in DB. So skipping..."%(jobLink))
                             else:
                                 yield Request(url=jobLink, callback=self.parse_detail_page, headers=self.headers)
-	
+                            
                     self.page = self.page + 1 
                     next_page = self.searchUrl+str(self.page)
                     logging.info("\n\n\nGoing to next page: %s"%(next_page))
@@ -226,10 +226,10 @@ class EverjobsSpider(scrapy.Spider):
             else:
 
                 data['jobUrl'] = response.url
-                data['positionTitle'] = response.css("#job-header h3::text").extract_first()
+                data['positionTitle'] = " ".join(response.css("#job-header h3::text").extract())
                 data['jobID'] = response.url.split("/")[-1].split(".html")[0]
-                data['fullJobDescription'] = response.xpath("//h4[contains(text(),'Job Description')]/following-sibling::div[2]//text()").extract_first()
-                data['positionDescription'] = response.xpath("//h4[contains(text(),'Position Requirements')]/following-sibling::div[2]//text()").extract_first()
+                data['fullJobDescription'] = " ".join(response.xpath("//h4[contains(text(),'Job Description')]/following-sibling::div[2]//text()").extract())
+                data['positionDescription'] = " ".join(response.xpath("//h4[contains(text(),'Position Requirements')]/following-sibling::div[2]//text()").extract())
                 data['contractType'] = response.xpath("//dt[contains(text(),'Contract Type:')]/following-sibling::dd[1]//text()").extract_first()
                 data['sizeCompany'] = response.xpath("//dt[contains(text(),' Employees:')]/following-sibling::dd[1]//text()").extract_first()
                 data['locationCity'] = response.xpath("//dt[contains(text(),'City:')]/following-sibling::dd[1]//text()").extract_first()
@@ -238,13 +238,13 @@ class EverjobsSpider(scrapy.Spider):
                 data['CategoryTags'] = [response.xpath("//dt[contains(text(),'Job category:')]/following-sibling::dd[1]//text()").extract_first()]
                 data['salaryRange'] = response.xpath("//dt[contains(text(),'Salary:')]/following-sibling::dd[1]//text()").extract_first()
 
-                data['companyDescription'] = response.xpath("//h4[contains(text(),'About the Company')]/following-sibling::div[2]//text()").extract_first()
+                data['companyDescription'] = " ".join(response.xpath("//h4[contains(text(),'About the Company')]/following-sibling::div[2]//text()").extract())
 
-                data['skillsRequirements'] = response.xpath("//h4[contains(text(),'Professional Skills')]/../text()[last()]").extract_first()
-                data['languageSkillsRequirements'] = response.xpath("//h4[contains(text(),'Language Skills')]/../text()[last()]").extract_first()
+                data['skillsRequirements'] = " ".join(response.xpath("//h4[contains(text(),'Professional Skills')]/../text()[last()]").extract())
+                data['languageSkillsRequirements'] = " ".join(response.xpath("//h4[contains(text(),'Language Skills')]/../text()[last()]").extract())
 
-                data['minEducationRequirements'] = response.xpath("//dt[contains(text(),'Degree:')]/following-sibling::dd[1]//text()").extract_first()
-                data['minExperienceRequirements'] = response.xpath("//dt[contains(text(),'Minimum years of experience:')]/following-sibling::dd[1]//text()").extract_first()
+                data['minEducationRequirements'] = " ".join(response.xpath("//dt[contains(text(),'Degree:')]/following-sibling::dd[1]//text()").extract())
+                data['minExperienceRequirements'] = " ".join(response.xpath("//dt[contains(text(),'Minimum years of experience:')]/following-sibling::dd[1]//text()").extract())
                 data['jobLevel'] = response.xpath("//dt[contains(text(),'Career level:')]/following-sibling::dd[1]//text()").extract_first()
                 data['ApplyURL'] = response.css(".apply-wrapper .btn-apply::attr(href)").extract_first()
 
