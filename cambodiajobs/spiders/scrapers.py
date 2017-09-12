@@ -71,13 +71,12 @@ class SchedularSpider(scrapy.Spider):
 
     def __init__(self, schedular_id=None, *args, **kwargs):
             super(SchedularSpider, self).__init__(*args, **kwargs)
-            self.schedular_id = schedular_id 
+            self.spider_name = spider_name
             
             
     def start_requests(self):
 
-        # this `schedular_id` is sent via CronJob ... so do not change this IF-statement please.
-        if self.schedular_id is not None:
+            if self.schedular_id is not None:
 
                         logging.info("Loading all PGs associated with `schedular_id` = %s" % (self.schedular_id))
 
@@ -107,6 +106,7 @@ class SchedularSpider(scrapy.Spider):
                                 logging.info(resp.status_code)
                                 logging.info(resp.text)
 
+    
     
     
 class YpSpider(scrapy.Spider):
@@ -300,7 +300,7 @@ class EverjobsSpider(scrapy.Spider):
                     yield Request(url=next_page, callback=self.parse_listing_page, headers=self.headers)
                 
                 else:
-                    logging.info("\n\n\nwas last page"%(response.url))  
+                    logging.info("%s was last page"%(response.url))  
                         
                         
 	def parse_detail_page(self, response):
@@ -381,9 +381,11 @@ class EverjobsSpider(scrapy.Spider):
 	def spider_closed(self, spider):
 		logging.info("Spider is closed.")
                 
-#                req = urllib2.Request('https://45.55.161.5:8088')
-#                req.add_header('Content-Type', 'application/json')
-#
-#                response = urllib2.urlopen(req, json.dumps(self.all_jobs_scraped_this_run))
-#                
-#		logging.info(response)
+                headers = {
+                    'Authorization': 'Splunk DB84F19F-B2F1-4B89-BB38-643DFB641B34',
+                }
+
+                response = requests.post('https://45.55.161.5:8088/services/collector/event', headers=headers, data=json.dumps(self.all_jobs_scraped_this_run), verify=False)
+                
+		logging.info(response.status_code)
+		logging.info(response.text)
