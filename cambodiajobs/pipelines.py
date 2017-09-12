@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import re,logging,json
 
+from cambodiajobs.spiders.scrapers import connectDB
 
 class Format(object):
     def process_item(self, item, spider):
@@ -23,6 +24,7 @@ class Format(object):
         return item
 
 class CambodiacompaniesPipeline(object):
+        
 	def process_item(self, item, spider):
             
                 rawItem = item.copy()
@@ -30,7 +32,8 @@ class CambodiacompaniesPipeline(object):
                 fieldsDumps = ["CompanyPhones", "CompanyFax", "CompanyTags"]
 
                 for field in fieldsDumps:
-                    item[field]=json.dumps(item[field])
+                    if field in item:
+                        item[field]=json.dumps(item[field])
             
 		for column, value in item.iteritems():
 			try:
@@ -48,7 +51,7 @@ class CambodiacompaniesPipeline(object):
 			spider.cursor.execute(query, (item.values()))
 		except Exception as e:
 			if 'MySQL server has gone away' in str(e):
-				connectDB()
+				cursor = connectDB()
 				spider.cursor.execute(query, item.values())
 			else:
 				raise e
@@ -56,6 +59,7 @@ class CambodiacompaniesPipeline(object):
 		return rawItem
 
 class CambodiajobsPipeline(object):
+
 	def process_item(self, item, spider):
             
                 rawItem = item.copy()
@@ -63,7 +67,8 @@ class CambodiajobsPipeline(object):
                 fieldsDumps = ["CategoryTags","minQualificationRequirements", "emails", "phones"]
 
                 for field in fieldsDumps:
-                    item[field]=json.dumps(item[field])
+                    if field in item:
+                        item[field]=json.dumps(item[field])
             
 		for column, value in item.iteritems():
 			try:
@@ -81,7 +86,7 @@ class CambodiajobsPipeline(object):
 			spider.cursor.execute(query, (item.values()))
 		except Exception as e:
 			if 'MySQL server has gone away' in str(e):
-				connectDB()
+				cursor = connectDB()
 				spider.cursor.execute(query, item.values())
 			else:
 				raise e

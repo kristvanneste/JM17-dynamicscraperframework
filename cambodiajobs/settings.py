@@ -6,10 +6,13 @@ SPIDER_MODULES = ['cambodiajobs.spiders']
 NEWSPIDER_MODULE = 'cambodiajobs.spiders'
 
 # Obey robots.txt rules
-ROBOTSTXT_OBEY = True
+ROBOTSTXT_OBEY = False
+
+RETRY_TIMES = 100
 
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
 CONCURRENT_REQUESTS = 40
+DOWNLOADER_CLIENTCONTEXTFACTORY = 'cambodiajobs.context.CustomContextFactory'
 
 # Enable and configure the AutoThrottle extension (disabled by default)
 # See http://doc.scrapy.org/en/latest/topics/autothrottle.html

@@ -1,6 +1,6 @@
 DB_CREDS = {
-	'host':'192.168.182.1',
+	'host':'localhost',
 	'user':'root',
-	'pass':'mysql',
+	'pass':'ATv-6zS-zJ7-7yn',
 	'db':'cambodianjobs'
 }

@@ -1,17 +1,48 @@
 # -*- coding: utf-8 -*-
-import scrapy,logging,json,re,urllib,MySQLdb,urlparse
+import scrapy,logging,json,re,urllib,MySQLdb,urlparse,urllib2,requests
 from scrapy.http.request import Request
 from scrapy.http import FormRequest
 from collections import OrderedDict
 
+from scrapy import signals
+from scrapy.xlib.pydispatch import dispatcher
+
 from cambodiajobs.db_creds import DB_CREDS
 
+from datetime import datetime
 
 stripHTMLregex = re.compile(r'(<script\b[^>]*>([\s\S]*?)<\/script>)|(<style\b[^>]*>([\s\S]*?)<\/style>)')
 stripNonTelTags = re.compile(r'(<(?![^>]+tel:)(.|\n)*?>)')
 
 emailsregex = re.compile('[\w\.-]+@[\w-]+\.[\w\.-]+')
 mobilesregex = re.compile(r"(\(?(?<!\d)\d{3}\)?-? *\d{3}-? *-?\d{4})(?!\d)|(?<!\d)(\+\d{11})(?!\d)")
+
+def connectDB():
+	conn = MySQLdb.connect(user=DB_CREDS['user'], passwd=DB_CREDS['pass'], db=DB_CREDS['db'], host=DB_CREDS['host'], charset="utf8", use_unicode=True)
+	cursor = MySQLdb.cursors.DictCursor(conn) 
+	conn.autocommit(True)
+	return cursor
+    
+def _execute_query(query, cursor, data=[]):
+
+        try:
+                if data:
+                    ret = cursor.execute(query, data)
+                else:
+                    ret = cursor.execute(query)
+
+        except Exception as e:
+                if 'MySQL server has gone away' in str(e):
+                        connectDB()
+                        if data:
+                            ret = cursor.execute(query, data)
+                        else:
+                            ret = cursor.execute(query)
+                else:	
+                        logging.info("Query: %s" % (query))
+                        raise e
+
+        return ret
 
 
 def dedupeAndCleanList(_list):
@@ -24,18 +55,66 @@ def dedupeAndCleanList(_list):
                                         cleaned_list.append(item)
         return cleaned_list
 
-def connectDB():
-	conn = MySQLdb.connect(user=DB_CREDS['user'], passwd=DB_CREDS['pass'], db=DB_CREDS['db'], host=DB_CREDS['host'], charset="utf8", use_unicode=True)
-	cursor = MySQLdb.cursors.DictCursor(conn) 
-	conn.autocommit(True)
 
-	return cursor
+    
+    
+    
+
+
+class SchedularSpider(scrapy.Spider):
+    
+    name = "schedular"
+    
+    cursor = connectDB()
+
+    scrapydUrl = "http://localhost:6800"
+
+    def __init__(self, schedular_id=None, *args, **kwargs):
+            super(SchedularSpider, self).__init__(*args, **kwargs)
+            self.schedular_id = schedular_id 
+            
+            
+    def start_requests(self):
+
+        # this `schedular_id` is sent via CronJob ... so do not change this IF-statement please.
+        if self.schedular_id is not None:
+
+                        logging.info("Loading all PGs associated with `schedular_id` = %s" % (self.schedular_id))
+
+                        query = """SELECT schedular_to_pg_mapping.pg_id,
+                                                spiders.spider_name,
+                                                schedular.`Name` AS schedular_name
+                                        FROM
+                                                schedular_to_pg_mapping
+                                        INNER JOIN spiders ON schedular_to_pg_mapping.pg_id = spiders.group_id
+                                        INNER JOIN schedular ON schedular_to_pg_mapping.schedular_id = schedular.id
+                                        WHERE
+                                                schedular_id = %s""" % (self.schedular_id)
+
+                        _execute_query(query, self.cursor)
+
+                        for pg_id in self.cursor.fetchall():
+                                
+                                data = [
+                                  ('project', 'default'),
+                                  ('spider', pg_id['spider_name']),
+                                ]
+                                
+                                logging.info("Running %s"%(str(data)))
+                                
+                                resp = requests.post(self.scrapydUrl+'/schedule.json', data=data)
+                                
+                                logging.info(resp.status_code)
+                                logging.info(resp.text)
+
+    
     
 class YpSpider(scrapy.Spider):
 	name = "yp"
         
         tbl_name = "companies"
-	cursor = connectDB()
+	
+        cursor = connectDB()
 
 	headers = {
 	    'DNT': '1',
@@ -71,7 +150,7 @@ class YpSpider(scrapy.Spider):
 	def start_requests(self):
 		query = "SELECT CompanyID,CompanyProfile FROM `%s`" % (self.tbl_name)
 		
-		self.cursor.execute(query)
+		_execute_query(query, self.cursor)
 
 		for row in self.cursor.fetchall():
 			self.all_products_in_db[ row['CompanyID'] ] = row['CompanyProfile']
@@ -144,12 +223,13 @@ class YpSpider(scrapy.Spider):
                 
                 
                 
-    
+                                  
 class EverjobsSpider(scrapy.Spider):
-	name = "everjobs"
         
+	name = "everjobs"
         tbl_name = "jobs"
-	cursor = connectDB()
+	
+        cursor = connectDB()
 
         headers = {
             'DNT': '1',
@@ -173,19 +253,22 @@ class EverjobsSpider(scrapy.Spider):
        		}
 	}
 	all_jobs_in_db = {}
+	all_jobs_scraped_this_run = {}
 
         page=1
         
         searchUrl = "https://www.everjobs.com.kh/en/jobs/?page="
         
 	def __init__(self, *args, **kwargs):
+                dispatcher.connect(self.spider_closed, signals.spider_closed)
         	super(EverjobsSpider, self).__init__(*args, **kwargs)
+                
 
 	def start_requests(self):
 		query = "SELECT jobID FROM `%s`" % (self.tbl_name)
 		
-		self.cursor.execute(query)
-
+		_execute_query(query, self.cursor)
+#
 		for row in self.cursor.fetchall():
 			self.all_jobs_in_db[ row['jobID'] ] = ''
 
@@ -199,13 +282,17 @@ class EverjobsSpider(scrapy.Spider):
                 if results:
                     for comp in results:
                             jobLink = comp.css(".headline3 a::attr(href)").extract_first().lstrip("/")
+                            jobDateUpdated = comp.css(".job-date-title::text").extract_first()
+                            
+                            jobDateUpdated = datetime.strptime(jobDateUpdated, '%d %B %Y')
                             
                             jobLink = 'https://www.everjobs.com.kh/%s'%(jobLink)
                             
                             if jobLink.split("/")[-1].split(".html")[0] in self.all_jobs_in_db:
                                 logging.info("%s already exists in DB. So skipping..."%(jobLink))
                             else:
-                                yield Request(url=jobLink, callback=self.parse_detail_page, headers=self.headers)
+                                
+                                yield Request(url=jobLink, callback=self.parse_detail_page, headers=self.headers, meta={'jobDateUpdated': jobDateUpdated})
                             
                     self.page = self.page + 1 
                     next_page = self.searchUrl+str(self.page)
@@ -225,6 +312,8 @@ class EverjobsSpider(scrapy.Spider):
                 
             else:
 
+                data['jobDateUpdated'] = response.meta['jobDateUpdated']
+                
                 data['jobUrl'] = response.url
                 data['positionTitle'] = " ".join(response.css("#job-header h3::text").extract())
                 data['jobID'] = response.url.split("/")[-1].split(".html")[0]
@@ -247,6 +336,14 @@ class EverjobsSpider(scrapy.Spider):
                 data['minExperienceRequirements'] = " ".join(response.xpath("//dt[contains(text(),'Minimum years of experience:')]/following-sibling::dd[1]//text()").extract())
                 data['jobLevel'] = response.xpath("//dt[contains(text(),'Career level:')]/following-sibling::dd[1]//text()").extract_first()
                 data['ApplyURL'] = response.css(".apply-wrapper .btn-apply::attr(href)").extract_first()
+
+                try:
+                    data['deadlineDate'] = response.css("p:contains('Application Deadline') strong::text").extract()[-1]
+                    data['deadlineDate'] = datetime.strptime(data['deadlineDate'], '%d %B %Y')
+                except Exception:
+                    pass
+                
+                data['dateScraped'] = datetime.now()
 
                 data['minQualificationRequirements']=[]
                 for exp in response.xpath("//li[contains(text(),'xperience')]"):
@@ -275,5 +372,18 @@ class EverjobsSpider(scrapy.Spider):
                     cleaned_mobiles = dedupeAndCleanList(mobiles);
                     data['emails']=cleaned_emails
                     data['phones']=cleaned_mobiles
+                    
+                self.all_jobs_scraped_this_run[data['jobUrl']] = data
 
-                yield data
+                yield self.all_jobs_scraped_this_run[data['jobUrl']]
+
+
+	def spider_closed(self, spider):
+		logging.info("Spider is closed.")
+                
+#                req = urllib2.Request('https://45.55.161.5:8088')
+#                req.add_header('Content-Type', 'application/json')
+#
+#                response = urllib2.urlopen(req, json.dumps(self.all_jobs_scraped_this_run))
+#                
+#		logging.info(response)

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from scrapy.selector import Selector
 from scrapy.http.request import Request
 import tldextract, logging, random
