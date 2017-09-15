@@ -443,10 +443,10 @@ class BongthomSpider(scrapy.Spider):
                 
 
 	def start_requests(self):
-		query = "SELECT jobID FROM `%s`" % (self.tbl_name)
+		query = "SELECT jobUrl FROM `%s`" % (self.tbl_name)
 		
 		_execute_query(query, self.cursor)
-#
+
 		for row in self.cursor.fetchall():
 			self.all_jobs_in_db[ row['jobUrl'] ] = ''
 
