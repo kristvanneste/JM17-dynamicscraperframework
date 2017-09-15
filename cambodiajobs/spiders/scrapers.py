@@ -268,7 +268,6 @@ class EverjobsSpider(scrapy.Spider):
 		query = "SELECT jobID FROM `%s`" % (self.tbl_name)
 		
 		_execute_query(query, self.cursor)
-#
 		for row in self.cursor.fetchall():
 			self.all_jobs_in_db[ row['jobID'] ] = ''
 
@@ -313,7 +312,7 @@ class EverjobsSpider(scrapy.Spider):
             else:
 
                 data['jobDateUpdated'] = response.meta['jobDateUpdated']
-                
+                data['source'] = self.name
                 data['jobUrl'] = response.url
                 data['positionTitle'] = " ".join(response.css("#job-header h3::text").extract())
                 data['jobID'] = response.url.split("/")[-1].split(".html")[0]
@@ -389,3 +388,179 @@ class EverjobsSpider(scrapy.Spider):
                 
 		logging.info(response.status_code)
 		logging.info(response.text)
+                
+                
+                                  
+class BongthomSpider(scrapy.Spider):
+        
+	name = "bongthom"
+        tbl_name = "jobs"
+	
+        cursor = connectDB()
+
+        cookies = {
+            'ARRAffinity': 'b331a5556c704b9a06966143e491e99dafa498fe4238e02426b3eadb3c410eb5',
+            'WAWebSiteSID': 'ad200eb7c9af481b9c7a6a429ac2dfb0',
+            'BIGipServerEL_Customer_HTTP2': '!SEs8mj22vgbJdYEDa/QqeFVfB8A6Z4XZwC8fdtrwnxtpP4me4MkhN0CmPOcX5vJxJcyjnN7yIahPmw==',
+            'ASPSESSIONIDQCSCBDBQ': 'DNIAMEJDGPOCPOHMLAIKCHNM',
+            'ci_session': 'qdcs76lrvgd0dnahuhvqus6osp35c1eu',
+            '_ga': 'GA1.2.1400748127.1503995115',
+            '_gid': 'GA1.2.430404378.1505393562',
+            '_gat': '1',
+        }
+
+        headers = {
+            'DNT': '1',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Language': 'en-US,en;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.113 Safari/537.36',
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Referer': 'https://bongthom.com/',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Connection': 'keep-alive',
+        }
+
+	custom_settings = {
+		'DOWNLOADER_MIDDLEWARES': {
+		    'scrapy.downloadermiddlewares.httpproxy.HttpProxyMiddleware': 200,
+		    'cambodiajobs.middlewares.ProxiesMiddleware': 300,
+		},
+        	'ITEM_PIPELINES': {
+                        'cambodiajobs.pipelines.Format': 1,
+                        'cambodiajobs.pipelines.CambodiajobsPipeline': 200,
+       		}
+	}
+	all_jobs_in_db = {}
+	all_jobs_scraped_this_run = {}
+
+        page = 1
+        
+        baseUrl = "https://bongthom.com"
+        
+	def __init__(self, *args, **kwargs):
+                dispatcher.connect(self.spider_closed, signals.spider_closed)
+        	super(BongthomSpider, self).__init__(*args, **kwargs)
+                
+
+	def start_requests(self):
+		query = "SELECT jobID FROM `%s`" % (self.tbl_name)
+		
+		_execute_query(query, self.cursor)
+#
+		for row in self.cursor.fetchall():
+			self.all_jobs_in_db[ row['jobUrl'] ] = ''
+
+                yield Request('%s/job_list.html?key=0.9397814781626785&get_total_page=true&page=%s'%(self.baseUrl, str(self.page)), callback=self.parse_listing_page, headers=self.headers, cookies=self.cookies)
+
+
+        def parse_listing_page(self, response):
+
+            resp = json.loads(response.body)
+
+            if resp['jobs']:
+                for comp in resp['jobs']:
+
+                    jobLink = re.sub(r'(<([^>]+)>)', '', comp['job_title'], flags=re.IGNORECASE)
+                    jobLink = re.sub(r'[^a-zA-Z0-9]', '_', jobLink)
+                    jobLink = re.sub(r'_{1,}', '_', jobLink)
+                    jobLink = jobLink.lower()
+
+                    jobLink = jobLink[0:39];
+                    jobLink = re.sub(r'(^_)|(_$)', '', jobLink)
+                    jobLink = "view_detail" if jobLink == "" else jobLink
+                    jobLink = self.baseUrl + "/" + "job_detail/" + jobLink + "_" + str(comp['job_id']) + ".html"
+
+                    if jobLink in self.all_jobs_in_db:
+                        logging.info("%s already exists in DB. So skipping..."%(jobLink))
+                    else:
+                        logging.info("%s "%(jobLink))
+                        
+                        yield Request(url=jobLink, callback=self.parse_detail_page, headers=self.headers, meta={'data': comp})
+
+                if int(self.page) == int(resp['num_pages']):
+                    logging.info("%s was last page"%(response.url))  
+                else:
+
+                    self.page = self.page + 1 
+                    logging.info("Going to next page: %s"%(str(self.page)))
+                    yield Request('%s/job_list.html?key=0.9397814781626785&get_total_page=true&page=%s'%(self.baseUrl, str(self.page)), callback=self.parse_listing_page, headers=self.headers, cookies=self.cookies)
+
+
+                        
+	def parse_detail_page(self, response):
+            data = {}
+                
+            data['jobID'] = str(response.meta['data']['job_id'])
+            data['source'] = self.name
+            data['jobUrl'] = response.url
+            
+            data['FullJobDescription'] = " ".join(response.xpath("//h2[contains(text(),'Announcement Description')]/following-sibling::p[1]//text()").extract())
+            data['companyName'] = response.meta['data']['company_en']
+            data['companyLogo'] = self.baseUrl+"/clients/"+str(response.meta['data']['company_id'])+"/images/"+response.meta['data']['company_en']
+            data['companyURL'] = response.xpath("//*[@class='title']/following-sibling::a[1]/@href").extract_first()
+            
+            data['applyEmail'] = response.xpath("//a[starts-with(@href, 'mailto')]/text()").extract_first()
+            
+            data['jobDateUpdated'] = response.meta['data']['submit_date']
+            data['deadlineDate'] = response.meta['data']['closing_date']
+            data['dateScraped'] = datetime.now()
+ 
+            data['emails']=[]
+            data['phones']=[]
+            
+            for phone in response.xpath("//*[@class='fa fa-phone-square']/ancestor::div[@class='hidden-xs ellipsis-text']//text()").extract():
+                data['phones'].extend([phone])
+
+            lc_body = ''.join(response.xpath("//body").extract()) if response.xpath("//body").extract() else None
+
+            if lc_body:
+                lc_body = lc_body.lower()
+
+                lc_body = stripHTMLregex.sub("", lc_body)
+                lc_body = stripNonTelTags.sub(" ", lc_body)
+
+                emails = emailsregex.findall(lc_body)
+                mobiles = mobilesregex.findall(lc_body)
+
+                for email in emails: #fix errorneus email detection, its detecting strings such as blah@2x.jpg as emails
+                                if email.split(".")[-1] in ['jpg', 'jpeg', 'png', 'bmp']:
+                                                emails.remove(email)
+
+                # clean and dedupe
+                cleaned_emails = dedupeAndCleanList(emails);
+                cleaned_mobiles = dedupeAndCleanList(mobiles);
+                data['emails']= data['emails'] + cleaned_emails
+                data['phones']= data['phones'] + cleaned_mobiles
+            
+            
+            for pos in response.css("div.job-detail-pos"):
+                
+                position = data.copy()
+                position['positionTitle'] = " ".join(a.strip() for a in pos.css("h3 *::text").extract())
+                
+                position['CategoryTags'] = pos.css("em::text").extract_first()
+                position['CategoryTags'] = position['CategoryTags'].split(",")
+                position['CategoryTags'] = [a.strip() for a in position['CategoryTags']]
+
+                position['jobID'] = data['jobID']+str(pos.css("h3 a::attr(id)").extract_first().split("pos-")[1])
+                position['locationCity'] = pos.xpath("//span[contains(text(),'Location')]/following-sibling::span[1]//text()").extract_first()
+                position['contractType'] = pos.xpath("//span[contains(text(),'Schedule')]/following-sibling::span[1]//text()").extract_first()
+                position['salaryRange'] = pos.xpath("//span[contains(text(),'Salary')]/following-sibling::span[1]//text()").extract_first()
+                    
+                self.all_jobs_scraped_this_run[position['jobID']] = position
+
+                yield self.all_jobs_scraped_this_run[position['jobID']]
+
+
+
+	def spider_closed(self, spider):
+		logging.info("Spider is closed.")
+                
+#                headers = {
+#                    'Authorization': 'Splunk DB84F19F-B2F1-4B89-BB38-643DFB641B34',
+#                }
+#
+#                response = requests.post('https://45.55.161.5:8088/services/collector/event', headers=headers, data=json.dumps(self.all_jobs_scraped_this_run), verify=False)
+#                
+#		logging.info(response.status_code)
+#		logging.info(response.text)

@@ -1,3 +1,4 @@
 nbproject
 *.pyc
 twistd.pid
+cambodiajobs/db_creds.py
