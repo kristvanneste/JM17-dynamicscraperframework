@@ -56,6 +56,28 @@ def dedupeAndCleanList(_list):
         return cleaned_list
 
 
+def sendSplunk(dataToSend):
+    headers = {
+        'Authorization': 'Splunk DB84F19F-B2F1-4B89-BB38-643DFB641B34',
+    }
+    
+    # convert datetime objects to STR so it could successfully eb serialized into JSON
+    for key, value in dataToSend.items():
+        if type(value) is datetime:
+            dataToSend[key] = str(value)
+        if type(value) is dict:
+            for k,v in value.iteritems():
+                    if type(dataToSend[key][k]) is datetime:
+                            dataToSend[key][k] =  str(dataToSend[key][k])
+        if type(value) is list:
+            for k,v in enumerate(value):
+                    if type(dataToSend[key][k]) is datetime:
+                            dataToSend[key][k] =  str(dataToSend[key][k])
+
+    response = requests.post('https://45.55.161.5:8088/services/collector/event', headers=headers, data=json.dumps({"event": {"data": dataToSend}}), verify=False)
+
+    logging.info(response.status_code)
+    logging.info(response.text)
     
     
     
@@ -69,44 +91,57 @@ class SchedularSpider(scrapy.Spider):
 
     scrapydUrl = "http://localhost:6800"
 
-    def __init__(self, schedular_id=None, *args, **kwargs):
+    def __init__(self, schedular_id=None,spider_name=None, *args, **kwargs):
             super(SchedularSpider, self).__init__(*args, **kwargs)
             self.spider_name = spider_name
+            self.schedular_id = schedular_id
             
             
     def start_requests(self):
 
             if self.schedular_id is not None:
 
-                        logging.info("Loading all PGs associated with `schedular_id` = %s" % (self.schedular_id))
+                logging.info("Loading all PGs associated with `schedular_id` = %s" % (self.schedular_id))
 
-                        query = """SELECT schedular_to_pg_mapping.pg_id,
-                                                spiders.spider_name,
-                                                schedular.`Name` AS schedular_name
-                                        FROM
-                                                schedular_to_pg_mapping
-                                        INNER JOIN spiders ON schedular_to_pg_mapping.pg_id = spiders.group_id
-                                        INNER JOIN schedular ON schedular_to_pg_mapping.schedular_id = schedular.id
-                                        WHERE
-                                                schedular_id = %s""" % (self.schedular_id)
+                query = """SELECT schedular_to_pg_mapping.pg_id,
+                                        spiders.spider_name,
+                                        schedular.`Name` AS schedular_name
+                                FROM
+                                        schedular_to_pg_mapping
+                                INNER JOIN spiders ON schedular_to_pg_mapping.pg_id = spiders.group_id
+                                INNER JOIN schedular ON schedular_to_pg_mapping.schedular_id = schedular.id
+                                WHERE
+                                        schedular_id = %s""" % (self.schedular_id)
 
-                        _execute_query(query, self.cursor)
+                _execute_query(query, self.cursor)
 
-                        for pg_id in self.cursor.fetchall():
-                                
-                                data = [
-                                  ('project', 'default'),
-                                  ('spider', pg_id['spider_name']),
-                                ]
-                                
-                                logging.info("Running %s"%(str(data)))
-                                
-                                resp = requests.post(self.scrapydUrl+'/schedule.json', data=data)
-                                
-                                logging.info(resp.status_code)
-                                logging.info(resp.text)
+                for pg_id in self.cursor.fetchall():
 
-    
+                        data = [
+                          ('project', 'default'),
+                          ('spider', pg_id['spider_name']),
+                        ]
+
+                        logging.info("Running %s"%(str(data)))
+
+                        resp = requests.post(self.scrapydUrl+'/schedule.json', data=data)
+
+                        logging.info(resp.status_code)
+                        logging.info(resp.text)
+
+            if self.spider_name is not None:
+                        data = [
+                          ('project', 'default'),
+                          ('spider', self.spider_name),
+                        ]
+
+                        logging.info("Running %s"%(str(data)))
+
+                        resp = requests.post(self.scrapydUrl+'/schedule.json', data=data)
+
+                        logging.info(resp.status_code)
+                        logging.info(resp.text)
+                
     
     
 class YpSpider(scrapy.Spider):
@@ -380,14 +415,7 @@ class EverjobsSpider(scrapy.Spider):
 	def spider_closed(self, spider):
 		logging.info("Spider is closed.")
                 
-                headers = {
-                    'Authorization': 'Splunk DB84F19F-B2F1-4B89-BB38-643DFB641B34',
-                }
-
-                response = requests.post('https://45.55.161.5:8088/services/collector/event', headers=headers, data=json.dumps(self.all_jobs_scraped_this_run), verify=False)
-                
-		logging.info(response.status_code)
-		logging.info(response.text)
+                sendSplunk(self.all_jobs_scraped_this_run)
                 
                 
                                   
@@ -556,11 +584,6 @@ class BongthomSpider(scrapy.Spider):
 	def spider_closed(self, spider):
 		logging.info("Spider is closed.")
                 
-#                headers = {
-#                    'Authorization': 'Splunk DB84F19F-B2F1-4B89-BB38-643DFB641B34',
-#                }
-#
-#                response = requests.post('https://45.55.161.5:8088/services/collector/event', headers=headers, data=json.dumps(self.all_jobs_scraped_this_run), verify=False)
-#                
-#		logging.info(response.status_code)
-#		logging.info(response.text)
+                sendSplunk(self.all_jobs_scraped_this_run)
+                
+                
