@@ -11,7 +11,7 @@ ROBOTSTXT_OBEY = False
 RETRY_TIMES = 100
 
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
-CONCURRENT_REQUESTS = 1
+CONCURRENT_REQUESTS = 20
 DOWNLOADER_CLIENTCONTEXTFACTORY = 'cambodiajobs.context.CustomContextFactory'
 
 # Enable and configure the AutoThrottle extension (disabled by default)

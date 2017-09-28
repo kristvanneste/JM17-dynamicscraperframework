@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-import scrapy,logging,json,re,urllib,MySQLdb,urlparse,urllib2,requests
+import scrapy,logging,json,re,urllib,MySQLdb,urlparse,urllib2,requests,codecs
 from scrapy.http.request import Request
 from scrapy.http import FormRequest
 from collections import OrderedDict
+
+from scrapy.http import HtmlResponse
 
 from scrapy import signals
 from scrapy.xlib.pydispatch import dispatcher
@@ -25,35 +27,35 @@ def connectDB():
     
 def _execute_query(query, cursor, data=[]):
 
-        try:
-                if data:
-                    ret = cursor.execute(query, data)
-                else:
-                    ret = cursor.execute(query)
+    try:
+        if data:
+            ret = cursor.execute(query, data)
+        else:
+            ret = cursor.execute(query)
 
-        except Exception as e:
-                if 'MySQL server has gone away' in str(e):
-                        connectDB()
-                        if data:
-                            ret = cursor.execute(query, data)
-                        else:
-                            ret = cursor.execute(query)
-                else:	
-                        logging.info("Query: %s" % (query))
-                        raise e
+    except Exception as e:
+        if 'MySQL server has gone away' in str(e):
+            connectDB()
+            if data:
+                ret = cursor.execute(query, data)
+            else:
+                ret = cursor.execute(query)
+        else:	
+            logging.info("Query: %s" % (query))
+            raise e
 
-        return ret
+    return ret
 
 
 def dedupeAndCleanList(_list):
-        cleaned_list = []
+    cleaned_list = []
 
-        for item in _list:
-                        if isinstance(item, tuple):
-                                        item = ''.join(str(i.encode('utf-8')) for i in item) 
-                        if item not in cleaned_list:
-                                        cleaned_list.append(item)
-        return cleaned_list
+    for item in _list:
+        if isinstance(item, tuple):
+            item = ''.join(str(i.encode('utf-8')) for i in item) 
+        if item not in cleaned_list and item != "":
+            cleaned_list.append(item)
+    return cleaned_list
 
 
 def sendSplunk(dataToSend):
@@ -292,7 +294,8 @@ class EverjobsSpider(scrapy.Spider):
 
         page=1
         
-        searchUrl = "https://www.everjobs.com.kh/en/jobs/?page="
+        baseUrl = "https://www.everjobs.com.kh"
+        searchUrl = "%s/en/jobs/?page=" % (baseUrl)
         
 	def __init__(self, *args, **kwargs):
                 dispatcher.connect(self.spider_closed, signals.spider_closed)
@@ -370,7 +373,11 @@ class EverjobsSpider(scrapy.Spider):
                 data['minExperienceRequirements'] = " ".join(response.xpath("//dt[contains(text(),'Minimum years of experience:')]/following-sibling::dd[1]//text()").extract())
                 data['jobLevel'] = response.xpath("//dt[contains(text(),'Career level:')]/following-sibling::dd[1]//text()").extract_first()
                 data['ApplyURL'] = response.css(".apply-wrapper .btn-apply::attr(href)").extract_first()
-
+                
+                data['companyURL'] = response.xpath("//*[contains(@class, 'icon icon-home')]/ancestor::a/@href").extract_first()
+                if data['companyURL'] is not None:
+                    data['companyURL'] = self.baseUrl + data['companyURL']
+                    
                 try:
                     data['deadlineDate'] = response.css("p:contains('Application Deadline') strong::text").extract()[-1]
                     data['deadlineDate'] = datetime.strptime(data['deadlineDate'], '%d %B %Y')
@@ -406,11 +413,23 @@ class EverjobsSpider(scrapy.Spider):
                     cleaned_mobiles = dedupeAndCleanList(mobiles);
                     data['emails']=cleaned_emails
                     data['phones']=cleaned_mobiles
-                    
-                self.all_jobs_scraped_this_run[data['jobUrl']] = data
 
-                yield self.all_jobs_scraped_this_run[data['jobUrl']]
+                if 'companyURL' in data and data['companyURL'] is not None:
+                    yield Request(url=data['companyURL'], callback=self.parse_company_page, headers=self.headers, meta={'data': data})
+                else:
+                    self.all_jobs_scraped_this_run[data['jobUrl']] = data
+                    yield self.all_jobs_scraped_this_run[data['jobUrl']]
 
+        
+        def parse_company_page(self, response):
+            
+            data = response.meta['data']
+            data['companyWebsite'] = response.xpath("//dt[contains(text(),'Website')]/following-sibling::dd[1]/a/@href").extract_first()
+
+            logging.info("\n\n\n\nHERE")
+            logging.info(data['companyWebsite'])
+            self.all_jobs_scraped_this_run[data['jobUrl']] = data
+            yield self.all_jobs_scraped_this_run[data['jobUrl']]
 
 	def spider_closed(self, spider):
 		logging.info("Spider is closed.")
@@ -458,6 +477,9 @@ class BongthomSpider(scrapy.Spider):
                         'cambodiajobs.pipelines.CambodiajobsPipeline': 200,
        		}
 	}
+        
+        hiddenWords = {}
+        
 	all_jobs_in_db = {}
 	all_jobs_scraped_this_run = {}
 
@@ -465,20 +487,25 @@ class BongthomSpider(scrapy.Spider):
         
         baseUrl = "https://bongthom.com"
         
+        languageSkillsRequirements = ["language", " Mandarin "," Spanish "," English "," Hindi "," Arabic "," Portuguese "," Bengali "," Russian "," Japanese "," Punjabi "," German "," Javanese "," Wu "," Malay "," Telugu "," Vietnamese "," Korean "," French "," Marathi "," Tamil "," Urdu "," Turkish "," Italian "," Yue "," Thai "," Gujarati "," Jin "," Southern Min "," Persian "," Polish "," Pashto "," Kannada "," Xiang "," Malayalam "," Sundanese "," Hausa "," Odia "," Burmese "," Hakka "," Ukrainian "," Bhojpuri "," Tagalog "," Yoruba "," Maithili "," Uzbek "," Sindhi "," Amharic "," Fula "," Romanian "," Oromo "," Igbo "," Azerbaijani "," Awadhi "," Gan Chinese "," Cebuano "," Dutch "," Kurdish "," Serbo-Croatian "," Malagasy "," Saraiki "," Nepali "," Sinhalese "," Chittagonian "," Zhuang "," Khmer "," Turkmen "," Assamese "," Madurese "," Somali "," Marwari "," Magahi "," Haryanvi "," Hungarian "," Chhattisgarhi "," Greek "," Chewa "," Deccan "," Akan "," Kazakh "," Northern Min "," Sylheti "," Zulu "," Czech "," Kinyarwanda "," Dhundhari "," Haitian Creole "," Eastern Min "," Ilocano "," Quechua "," Kirundi "," Swedish "," Hmong "," Shona "," Uyghur "," Hiligaynon/Ilonggo "," Mossi "," Xhosa "," Belarusian "," Balochi "," Konkani "]
+        minEducationRequirements = ["bachelor", "masters", "degree"]
+        minExperienceRequirements = ["years of", "experience"]
+        
 	def __init__(self, *args, **kwargs):
                 dispatcher.connect(self.spider_closed, signals.spider_closed)
         	super(BongthomSpider, self).__init__(*args, **kwargs)
                 
 
 	def start_requests(self):
-		query = "SELECT jobUrl FROM `%s`" % (self.tbl_name)
-		
-		_execute_query(query, self.cursor)
+            
+            query = "SELECT jobUrl FROM `%s`" % (self.tbl_name)
 
-		for row in self.cursor.fetchall():
-			self.all_jobs_in_db[ row['jobUrl'] ] = ''
+            _execute_query(query, self.cursor)
 
-                yield Request('%s/job_list.html?key=0.9397814781626785&get_total_page=true&page=%s'%(self.baseUrl, str(self.page)), callback=self.parse_listing_page, headers=self.headers, cookies=self.cookies)
+            for row in self.cursor.fetchall():
+                    self.all_jobs_in_db[ row['jobUrl'] ] = ''
+
+            yield Request('%s/job_list.html?key=0.9397814781626785&get_total_page=true&page=%s'%(self.baseUrl, str(self.page)), callback=self.parse_listing_page, headers=self.headers, cookies=self.cookies)
 
 
         def parse_listing_page(self, response):
@@ -516,30 +543,109 @@ class BongthomSpider(scrapy.Spider):
 
                         
 	def parse_detail_page(self, response):
-            data = {}
+            
+            hiddenWordsCss = response.css('link[data-src="escape"]::attr("href")').extract_first()
+            
+            if hiddenWordsCss is not None:
+         
+                yield Request(url=hiddenWordsCss, callback=self.parse_hidden_wods_link, headers=self.headers, meta={'response_obj': response})
                 
+            else:
+                logging.info("NO LINK hiddenWordsCss\n\n\n\n\n")
+                self.parse_job_webpage(response)
+        
+        def parse_hidden_wods_link(self, response):
+            
+            hiddenWords = response.body
+            hiddenWords = test.split(".bte-")
+
+            hiddenWords = hiddenWords[1:]
+
+            hiddenWords = ".bte-" + ".bte-".join(hiddenWords)
+
+            hiddenWords = hiddenWords.replace("::before{content:", "\": ").replace(".bte-", '"bte-').replace(";}",",").strip().strip(",")
+
+            hiddenWords="{"+hiddenWords+"}"
+            hiddenWords = json.loads(hiddenWords)
+            
+            response_obj = response.meta['response_obj']
+            
+            response_obj.meta['hiddenLinks'] = hiddenWords
+            
+            all_jobs_this_page = self.parse_job_webpage(response_obj)
+            
+            for job_id, pos in all_jobs_this_page.iteritems():
+                
+                # scrape company website if it is not on the job detail lpage
+                if 'companyURL' in pos and ('companyWebsite' not in pos or pos['companyWebsite'] is None):
+                    yield Request(url=pos['companyURL'], callback=self.parse_company_page, headers=self.headers, meta={'all_jobs_this_page': all_jobs_this_page})
+                    break # break out of here ... all jobs scraped from this job detail pge will be Yielded from parse_company_page function
+
+                self.all_jobs_scraped_this_run[job_id] = pos
+                yield self.all_jobs_scraped_this_run[job_id]
+
+        
+        def parse_company_page(self, response):
+            
+            all_jobs_this_page = response.meta['all_jobs_this_page']
+            
+            for job_id, pos in all_jobs_this_page.iteritems():
+                pos['companyWebsite'] = response.css("div strong:contains('Website') a::attr(href)").extract_first()
+
+                self.all_jobs_scraped_this_run[job_id] = pos
+                yield self.all_jobs_scraped_this_run[job_id]
+        
+        def parse_job_webpage(self, response):
+            
+            response_body = "".join(a for a in response.css("body").extract())
+            
+            logging.info("URL: "+response.url)
+            if 'hiddenLinks' in response.meta:
+                hiddenLinks = response.meta['hiddenLinks']
+
+                for cssClass, relacementChar in hiddenLinks.iteritems():
+
+                    sub_res = re.subn(u"(<span class=\"\w+\s*"+cssClass+"\">.*?</span>)", \
+                                        " "+relacementChar+" ", \
+                                                response_body)
+                    if sub_res[1] > 0:
+                        response_body = sub_res[0]
+                        response_body = re.sub(r"\s\s+", ' ', response_body)
+                
+            response_body = HtmlResponse(url=response.url, body=response_body, encoding='utf-8')
+
+            all_jobs_this_page = {}
+            
+            data = {}
+            
             data['jobID'] = str(response.meta['data']['job_id'])
             data['source'] = self.name
             data['jobUrl'] = response.url
-            
-            data['FullJobDescription'] = " ".join(response.xpath("//h2[contains(text(),'Announcement Description')]/following-sibling::p[1]//text()").extract())
+
+            data['FullJobDescription'] = " ".join(response_body.xpath("//h2[contains(text(),'Announcement Description')]/following-sibling::p[1]//text()").extract())
             data['companyName'] = response.meta['data']['company_en']
-            data['companyLogo'] = self.baseUrl+"/clients/"+str(response.meta['data']['company_id'])+"/images/"+response.meta['data']['company_en']
-            data['companyURL'] = response.xpath("//*[@class='title']/following-sibling::a[1]/@href").extract_first()
             
-            data['applyEmail'] = response.xpath("//a[starts-with(@href, 'mailto')]/text()").extract_first()
+            if "company_logo" in response.meta['data'] and response.meta['data']['company_logo'] is not None:
+                data['companyLogo'] = self.baseUrl+"/clients/"+str(response.meta['data']['company_id'])+"/images/"+response.meta['data']['company_logo']
             
+            data['companyURL'] = response_body.xpath("//*[@class='title']/following-sibling::a[1]/@href").extract_first()
+            data['companyWebsite'] = response_body.xpath("//strong[contains(text(),'Website')]/following-sibling::div[1]/a/@href").extract_first()
+            
+            data['applyEmail'] = response_body.xpath("//a[starts-with(@href, 'mailto')]/text()").extract_first()
+
             data['jobDateUpdated'] = response.meta['data']['submit_date']
             data['deadlineDate'] = response.meta['data']['closing_date']
             data['dateScraped'] = datetime.now()
- 
+
             data['emails']=[]
             data['phones']=[]
-            
-            for phone in response.xpath("//*[@class='fa fa-phone-square']/ancestor::div[@class='hidden-xs ellipsis-text']//text()").extract():
-                data['phones'].extend([phone])
 
-            lc_body = ''.join(response.xpath("//body").extract()) if response.xpath("//body").extract() else None
+            for phone in response_body.xpath("//*[@class='fa fa-phone-square']/ancestor::div[@class='hidden-xs ellipsis-text']//text()").extract():
+                phone = phone.strip()
+                if phone != "" and phone not in data['phones']:
+                    data['phones'].extend([phone])
+
+            lc_body = ''.join(response_body.xpath("//body").extract()) if response_body.xpath("//body").extract() else None
 
             if lc_body:
                 lc_body = lc_body.lower()
@@ -551,21 +657,47 @@ class BongthomSpider(scrapy.Spider):
                 mobiles = mobilesregex.findall(lc_body)
 
                 for email in emails: #fix errorneus email detection, its detecting strings such as blah@2x.jpg as emails
-                                if email.split(".")[-1] in ['jpg', 'jpeg', 'png', 'bmp']:
-                                                emails.remove(email)
+                    if email.split(".")[-1] in ['jpg', 'jpeg', 'png', 'bmp']:
+                        emails.remove(email)
 
                 # clean and dedupe
                 cleaned_emails = dedupeAndCleanList(emails);
                 cleaned_mobiles = dedupeAndCleanList(mobiles);
                 data['emails']= data['emails'] + cleaned_emails
                 data['phones']= data['phones'] + cleaned_mobiles
-            
-            
-            for pos in response.css("div.job-detail-pos"):
-                
+
+
+            for pos in response_body.css("div.job-detail-pos"):
+
                 position = data.copy()
+                position['languageSkillsRequirements'] = []
+                position['minEducationRequirements'] = []
+                position['minExperienceRequirements'] = []
+
+                for li in pos.css("ul.job-detail-req li"):
+                    li_text =  " ".join(a.strip() for a in li.css("*").extract())
+                    li_text = re.findall(r"(<li>.*?</li>)", li_text)[0]
+                                
+                    li_text = re.sub(u'<.*?>', '', li_text)
+
+                    for word in self.languageSkillsRequirements:
+                        if word.lower() in li_text.lower():
+                            position['languageSkillsRequirements'].extend([li_text])
+
+                    for word in self.minEducationRequirements:
+                        if word.lower() in li_text.lower():
+                            position['minEducationRequirements'].extend([li_text])
+
+                    for word in self.minExperienceRequirements:
+                        if word.lower() in li_text.lower():
+                            position['minExperienceRequirements'].extend([li_text])
+
+                position['languageSkillsRequirements'] = ",".join(position['languageSkillsRequirements'])
+                position['minEducationRequirements'] = ",".join(position['minEducationRequirements'])
+                position['minExperienceRequirements'] = ",".join(position['minExperienceRequirements'])
+
                 position['positionTitle'] = " ".join(a.strip() for a in pos.css("h3 *::text").extract())
-                
+
                 position['CategoryTags'] = pos.css("em::text").extract_first()
                 position['CategoryTags'] = position['CategoryTags'].split(",")
                 position['CategoryTags'] = [a.strip() for a in position['CategoryTags']]
@@ -574,16 +706,14 @@ class BongthomSpider(scrapy.Spider):
                 position['locationCity'] = pos.xpath("//span[contains(text(),'Location')]/following-sibling::span[1]//text()").extract_first()
                 position['contractType'] = pos.xpath("//span[contains(text(),'Schedule')]/following-sibling::span[1]//text()").extract_first()
                 position['salaryRange'] = pos.xpath("//span[contains(text(),'Salary')]/following-sibling::span[1]//text()").extract_first()
-                    
-                self.all_jobs_scraped_this_run[position['jobID']] = position
-
-                yield self.all_jobs_scraped_this_run[position['jobID']]
-
+                
+                all_jobs_this_page[position['jobID']] = position
+            
+            return all_jobs_this_page
 
 
 	def spider_closed(self, spider):
-		logging.info("Spider is closed.")
-                
-                sendSplunk(self.all_jobs_scraped_this_run)
-                
-                
+            logging.info("Spider is closed.")
+
+            sendSplunk(self.all_jobs_scraped_this_run)
+
