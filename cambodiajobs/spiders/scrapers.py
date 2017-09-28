@@ -557,7 +557,7 @@ class BongthomSpider(scrapy.Spider):
         def parse_hidden_wods_link(self, response):
             
             hiddenWords = response.body
-            hiddenWords = test.split(".bte-")
+            hiddenWords = hiddenWords.split(".bte-")
 
             hiddenWords = hiddenWords[1:]
 
