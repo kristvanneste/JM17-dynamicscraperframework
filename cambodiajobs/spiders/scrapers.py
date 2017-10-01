@@ -17,7 +17,7 @@ stripHTMLregex = re.compile(r'(<script\b[^>]*>([\s\S]*?)<\/script>)|(<style\b[^>
 stripNonTelTags = re.compile(r'(<(?![^>]+tel:)(.|\n)*?>)')
 
 emailsregex = re.compile('[\w\.-]+@[\w-]+\.[\w\.-]+')
-mobilesregex = re.compile(r"(\(?(?<!\d)\d{3}\)?-? *\d{3}-? *-?\d{4})(?!\d)|(?<!\d)(\+\d{11})(?!\d)")
+mobilesregex = re.compile(r"(\(?(?<!\d)\d{3}\)?-? *\d{3}-? *-?\d{3,4})(?!\d)|(?<!\d)(\+\d{11})(?!\d)")
 
 def connectDB():
 	conn = MySQLdb.connect(user=DB_CREDS['user'], passwd=DB_CREDS['pass'], db=DB_CREDS['db'], host=DB_CREDS['host'], charset="utf8", use_unicode=True)
@@ -297,6 +297,8 @@ class EverjobsSpider(scrapy.Spider):
         baseUrl = "https://www.everjobs.com.kh"
         searchUrl = "%s/en/jobs/?page=" % (baseUrl)
         
+        minEducationRequirements = ["primary", "secondary", "high school", "associate", "bachelor", "master", "doctoral"]
+
 	def __init__(self, *args, **kwargs):
                 dispatcher.connect(self.spider_closed, signals.spider_closed)
         	super(EverjobsSpider, self).__init__(*args, **kwargs)
@@ -321,14 +323,14 @@ class EverjobsSpider(scrapy.Spider):
                             jobLink = comp.css(".headline3 a::attr(href)").extract_first().lstrip("/")
                             jobDateUpdated = comp.css(".job-date-title::text").extract_first()
                             
-                            jobDateUpdated = datetime.strptime(jobDateUpdated, '%d %B %Y')
+                            jobDateUpdated = str(datetime.strptime(jobDateUpdated, '%d %B %Y'))
                             
                             jobLink = 'https://www.everjobs.com.kh/%s'%(jobLink)
                             
                             if jobLink.split("/")[-1].split(".html")[0] in self.all_jobs_in_db:
                                 logging.info("%s already exists in DB. So skipping..."%(jobLink))
                             else:
-                                
+                            
                                 yield Request(url=jobLink, callback=self.parse_detail_page, headers=self.headers, meta={'jobDateUpdated': jobDateUpdated})
                             
                     self.page = self.page + 1 
@@ -346,9 +348,12 @@ class EverjobsSpider(scrapy.Spider):
                 
             if "Sorry, this job was not found." in response.body:
                 logging.info("\n\n\n%s was removed"%(response.url))
+                data['jobID'] = response.url.split("/")[-1].split(".html")[0]
+                data['active'] = 0
                 
             else:
 
+                data['active'] = 1
                 data['jobDateUpdated'] = response.meta['jobDateUpdated']
                 data['source'] = self.name
                 data['jobUrl'] = response.url
@@ -369,10 +374,26 @@ class EverjobsSpider(scrapy.Spider):
                 data['skillsRequirements'] = " ".join(response.xpath("//h4[contains(text(),'Professional Skills')]/../text()[last()]").extract())
                 data['languageSkillsRequirements'] = " ".join(response.xpath("//h4[contains(text(),'Language Skills')]/../text()[last()]").extract())
 
-                data['minEducationRequirements'] = " ".join(response.xpath("//dt[contains(text(),'Degree:')]/following-sibling::dd[1]//text()").extract())
+                data['minEducationRequirements'] = response.xpath("//dt[contains(text(),'Degree:')]/following-sibling::dd[1]//text()").extract()
+
+                for p in response.css("p"):
+                        p_text = " ".join(a.strip() for a in p.css("*::text").extract())
+        
+                        for word in self.minEducationRequirements:
+                                if word.lower() in p_text.lower() and p_text not in data['minEducationRequirements']:
+                                        data['minEducationRequirements'].extend([p_text])
+
+                data['minEducationRequirements'] = ", ".join(data['minEducationRequirements'])
+
                 data['minExperienceRequirements'] = " ".join(response.xpath("//dt[contains(text(),'Minimum years of experience:')]/following-sibling::dd[1]//text()").extract())
                 data['jobLevel'] = response.xpath("//dt[contains(text(),'Career level:')]/following-sibling::dd[1]//text()").extract_first()
                 data['ApplyURL'] = response.css(".apply-wrapper .btn-apply::attr(href)").extract_first()
+
+                if data['ApplyURL']:
+                        data['ApplyURL'] = self.baseUrl + data['ApplyURL']
+
+                data['companyLogo'] = response.css("div.company-logo-wrapper img::attr(src)").extract_first()
+                data['companyName'] = response.css("div.company-header-wrapper h4 a::text").extract_first()
                 
                 data['companyURL'] = response.xpath("//*[contains(@class, 'icon icon-home')]/ancestor::a/@href").extract_first()
                 if data['companyURL'] is not None:
@@ -384,7 +405,7 @@ class EverjobsSpider(scrapy.Spider):
                 except Exception:
                     pass
                 
-                data['dateScraped'] = datetime.now()
+                data['dateScraped'] = str(datetime.now())
 
                 data['minQualificationRequirements']=[]
                 for exp in response.xpath("//li[contains(text(),'xperience')]"):
@@ -405,8 +426,8 @@ class EverjobsSpider(scrapy.Spider):
                     mobiles = mobilesregex.findall(lc_body)
 
                     for email in emails: #fix errorneus email detection, its detecting strings such as blah@2x.jpg as emails
-                                    if email.split(".")[-1] in ['jpg', 'jpeg', 'png', 'bmp']:
-                                                    emails.remove(email)
+                        if email.split(".")[-1] in ['jpg', 'jpeg', 'png', 'bmp']:
+                                emails.remove(email)
 
                     # clean and dedupe
                     cleaned_emails = dedupeAndCleanList(emails);
@@ -423,13 +444,39 @@ class EverjobsSpider(scrapy.Spider):
         
         def parse_company_page(self, response):
             
-            data = response.meta['data']
-            data['companyWebsite'] = response.xpath("//dt[contains(text(),'Website')]/following-sibling::dd[1]/a/@href").extract_first()
+                data = response.meta['data']
+                data['companyWebsite'] = response.xpath("//dt[contains(text(),'Website')]/following-sibling::dd[1]/a/@href").extract_first()
 
-            logging.info("\n\n\n\nHERE")
-            logging.info(data['companyWebsite'])
-            self.all_jobs_scraped_this_run[data['jobUrl']] = data
-            yield self.all_jobs_scraped_this_run[data['jobUrl']]
+                lc_body = ''.join(response.xpath("//body").extract()) if response.xpath("//body").extract() else None
+
+                if lc_body:
+                        lc_body = lc_body.lower()
+
+                        lc_body = stripHTMLregex.sub("", lc_body)
+                        lc_body = stripNonTelTags.sub(" ", lc_body)
+
+                        lc_body = re.sub(r"\s\s+", " ", lc_body)
+
+                        logging.info(lc_body)
+                        emails = emailsregex.findall(lc_body)
+                        phones = mobilesregex.findall(lc_body)
+            
+                        emails = emails + data['emails']
+                        phones = phones + data['phones']
+
+                        for email in emails: #fix errorneus email detection, its detecting strings such as blah@2x.jpg as emails
+                                if email.split(".")[-1] in ['jpg', 'jpeg', 'png', 'bmp']:
+                                        emails.remove(email)
+
+                        # clean and dedupe
+                        cleaned_emails = dedupeAndCleanList(emails);
+                        cleaned_mobiles = dedupeAndCleanList(phones);
+                        data['emails']=cleaned_emails
+                        data['phones']=cleaned_mobiles
+
+
+                self.all_jobs_scraped_this_run[data['jobUrl']] = data
+                yield self.all_jobs_scraped_this_run[data['jobUrl']]
 
 	def spider_closed(self, spider):
 		logging.info("Spider is closed.")
@@ -534,11 +581,11 @@ class BongthomSpider(scrapy.Spider):
 
                 if int(self.page) == int(resp['num_pages']):
                     logging.info("%s was last page"%(response.url))  
-                else:
-
-                    self.page = self.page + 1 
-                    logging.info("Going to next page: %s"%(str(self.page)))
-                    yield Request('%s/job_list.html?key=0.9397814781626785&get_total_page=true&page=%s'%(self.baseUrl, str(self.page)), callback=self.parse_listing_page, headers=self.headers, cookies=self.cookies)
+                # else:
+# 
+                    # self.page = self.page + 1 
+                    # logging.info("Going to next page: %s"%(str(self.page)))
+                    # yield Request('%s/job_list.html?key=0.9397814781626785&get_total_page=true&page=%s'%(self.baseUrl, str(self.page)), callback=self.parse_listing_page, headers=self.headers, cookies=self.cookies)
 
 
                         
@@ -597,7 +644,7 @@ class BongthomSpider(scrapy.Spider):
         
         def parse_job_webpage(self, response):
             
-            response_body = "".join(a for a in response.css("body").extract())
+            response_body = "".join(a for a in response.css("body").extract()).replace(u"\u2018", "'").replace(u"\u2019", "'")
             
             logging.info("URL: "+response.url)
             if 'hiddenLinks' in response.meta:
@@ -622,9 +669,9 @@ class BongthomSpider(scrapy.Spider):
             data['source'] = self.name
             data['jobUrl'] = response.url
 
-            data['FullJobDescription'] = " ".join(response_body.xpath("//h2[contains(text(),'Announcement Description')]/following-sibling::p[1]//text()").extract())
+            data['companyDescription'] = " ".join(response_body.xpath("//h2[contains(text(),'Announcement Description')]/following-sibling::p[1]//text()").extract())
             data['companyName'] = response.meta['data']['company_en']
-            
+
             if "company_logo" in response.meta['data'] and response.meta['data']['company_logo'] is not None:
                 data['companyLogo'] = self.baseUrl+"/clients/"+str(response.meta['data']['company_id'])+"/images/"+response.meta['data']['company_logo']
             
@@ -635,7 +682,11 @@ class BongthomSpider(scrapy.Spider):
 
             data['jobDateUpdated'] = response.meta['data']['submit_date']
             data['deadlineDate'] = response.meta['data']['closing_date']
+            data['deadlineDate'] = datetime.strptime(data['deadlineDate'], '%Y-%m-%d %H:%M:%S')
+
             data['dateScraped'] = datetime.now()
+
+            data['active'] = 1 if data['deadlineDate'] > data['dateScraped'] else 0
 
             data['emails']=[]
             data['phones']=[]
@@ -701,6 +752,15 @@ class BongthomSpider(scrapy.Spider):
                 position['CategoryTags'] = pos.css("em::text").extract_first()
                 position['CategoryTags'] = position['CategoryTags'].split(",")
                 position['CategoryTags'] = [a.strip() for a in position['CategoryTags']]
+
+                position['fullJobDescription'] = ""
+                duties = pos.xpath("h4[contains(text(),'Duties')]/following-sibling::ul//text()").extract_first()
+                if duties is not None and duties != "":
+                        position['fullJobDescription'] += "Duties: "+duties
+                
+                req = pos.xpath("h4[contains(text(),'Requirements')]/following-sibling::ul//text()").extract_first()
+                if req is not None and req != "":
+                        position['fullJobDescription'] += "Requirements: "+req
 
                 position['jobID'] = data['jobID']+str(pos.css("h3 a::attr(id)").extract_first().split("pos-")[1])
                 position['locationCity'] = pos.xpath("//span[contains(text(),'Location')]/following-sibling::span[1]//text()").extract_first()
