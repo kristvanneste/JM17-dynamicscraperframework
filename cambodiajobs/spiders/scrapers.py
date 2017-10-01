@@ -330,7 +330,6 @@ class EverjobsSpider(scrapy.Spider):
                             if jobLink.split("/")[-1].split(".html")[0] in self.all_jobs_in_db:
                                 logging.info("%s already exists in DB. So skipping..."%(jobLink))
                             else:
-                            
                                 yield Request(url=jobLink, callback=self.parse_detail_page, headers=self.headers, meta={'jobDateUpdated': jobDateUpdated})
                             
                     self.page = self.page + 1 
@@ -457,7 +456,6 @@ class EverjobsSpider(scrapy.Spider):
 
                         lc_body = re.sub(r"\s\s+", " ", lc_body)
 
-                        logging.info(lc_body)
                         emails = emailsregex.findall(lc_body)
                         phones = mobilesregex.findall(lc_body)
             
@@ -473,7 +471,6 @@ class EverjobsSpider(scrapy.Spider):
                         cleaned_mobiles = dedupeAndCleanList(phones);
                         data['emails']=cleaned_emails
                         data['phones']=cleaned_mobiles
-
 
                 self.all_jobs_scraped_this_run[data['jobUrl']] = data
                 yield self.all_jobs_scraped_this_run[data['jobUrl']]
@@ -576,16 +573,15 @@ class BongthomSpider(scrapy.Spider):
                         logging.info("%s already exists in DB. So skipping..."%(jobLink))
                     else:
                         logging.info("%s "%(jobLink))
-                        
+
                         yield Request(url=jobLink, callback=self.parse_detail_page, headers=self.headers, meta={'data': comp})
 
                 if int(self.page) == int(resp['num_pages']):
                     logging.info("%s was last page"%(response.url))  
-                # else:
-# 
-                    # self.page = self.page + 1 
-                    # logging.info("Going to next page: %s"%(str(self.page)))
-                    # yield Request('%s/job_list.html?key=0.9397814781626785&get_total_page=true&page=%s'%(self.baseUrl, str(self.page)), callback=self.parse_listing_page, headers=self.headers, cookies=self.cookies)
+                else:
+                    self.page = self.page + 1 
+                    logging.info("Going to next page: %s"%(str(self.page)))
+                    yield Request('%s/job_list.html?key=0.9397814781626785&get_total_page=true&page=%s'%(self.baseUrl, str(self.page)), callback=self.parse_listing_page, headers=self.headers, cookies=self.cookies)
 
 
                         
