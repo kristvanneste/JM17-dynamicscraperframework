@@ -335,7 +335,7 @@ class EverjobsSpider(scrapy.Spider):
                                 logging.info("%s already exists in DB. So skipping..."%(jobLink))
                             else:
                                 yield Request(url=jobLink, callback=self.parse_detail_page, headers=self.headers, meta={'jobDateUpdated': jobDateUpdated})
-                            
+
                     self.page = self.page + 1 
                     next_page = self.searchUrl+str(self.page)
                     logging.info("\n\n\nGoing to next page: %s"%(next_page))
@@ -449,7 +449,13 @@ class EverjobsSpider(scrapy.Spider):
             
                 data = response.meta['data']
                 data['companyWebsite'] = response.xpath("//dt[contains(text(),'Website')]/following-sibling::dd[1]/a/@href").extract_first()
-
+                
+                for email in response.css("a.__cf_email__"):
+                    rawEmail = email.css("::attr(data-cfemail)").extract_first()
+                    rawEmail = self.dcryptEmail(rawEmail)
+                    if rawEmail not in data['emails']:
+                        data['emails'].extend([rawEmail])
+                
                 lc_body = ''.join(response.xpath("//body").extract()) if response.xpath("//body").extract() else None
 
                 if lc_body:
@@ -478,6 +484,21 @@ class EverjobsSpider(scrapy.Spider):
 
                 self.all_jobs_scraped_this_run[data['jobUrl']] = data
                 yield self.all_jobs_scraped_this_run[data['jobUrl']]
+
+
+        def dcryptEmail(self, encryptedEmail):
+            counter = 0;
+
+            result = ''
+            hexChar = int('0x' + encryptedEmail[counter:2], 16)
+
+            counter = counter+2
+            while counter < len(encryptedEmail):
+                result = result + chr(int('0x' + encryptedEmail[counter:counter+2], 16) ^ hexChar)
+                counter = counter+2
+
+            return result
+
 
 	def spider_closed(self, spider):
 		logging.info("Spider is closed.")
@@ -577,7 +598,6 @@ class BongthomSpider(scrapy.Spider):
                         logging.info("%s already exists in DB. So skipping..."%(jobLink))
                     else:
                         logging.info("%s "%(jobLink))
-
                         yield Request(url=jobLink, callback=self.parse_detail_page, headers=self.headers, meta={'data': comp})
 
                 if int(self.page) == int(resp['num_pages']):
@@ -754,11 +774,11 @@ class BongthomSpider(scrapy.Spider):
                 position['CategoryTags'] = [a.strip() for a in position['CategoryTags']]
 
                 position['fullJobDescription'] = ""
-                duties = pos.xpath("h4[contains(text(),'Duties')]/following-sibling::ul//text()").extract_first()
+                duties = pos.xpath("h4[contains(text(),'Duties')]/following-sibling::ul").extract_first()
                 if duties is not None and duties != "":
                         position['fullJobDescription'] += "Duties: "+duties
                 
-                req = pos.xpath("h4[contains(text(),'Requirements')]/following-sibling::ul//text()").extract_first()
+                req = pos.xpath("h4[contains(text(),'Requirements')]/following-sibling::ul").extract_first()
                 if req is not None and req != "":
                         position['fullJobDescription'] += "Requirements: "+req
 
