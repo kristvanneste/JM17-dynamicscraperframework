@@ -13,6 +13,8 @@ from cambodiajobs.db_creds import DB_CREDS
 
 from datetime import datetime
 
+from elasticsearch import Elasticsearch
+
 stripHTMLregex = re.compile(r'(<script\b[^>]*>([\s\S]*?)<\/script>)|(<style\b[^>]*>([\s\S]*?)<\/style>)')
 stripNonTelTags = re.compile(r'(<(?![^>]+tel:)(.|\n)*?>)')
 
@@ -59,14 +61,16 @@ def dedupeAndCleanList(_list):
 
 
 def sendSplunk(dataToSend):
+    
+    logging.info("sendSplunk() starts")
     headers = {
         'Authorization': 'Splunk DB84F19F-B2F1-4B89-BB38-643DFB641B34',
     }
     
-    dataToSend = dict(dataToSend.values())
+    dataToSend = dataToSend.values()
 
     # convert datetime objects to STR so it could successfully eb serialized into JSON
-    for key, value in dataToSend.iteritems():
+    for key, value in enumerate(dataToSend):
         if type(value) is datetime:
             dataToSend[key] = str(value)
         if type(value) is dict:
@@ -77,14 +81,23 @@ def sendSplunk(dataToSend):
             for k,v in enumerate(value):
                     if type(dataToSend[key][k]) is datetime:
                             dataToSend[key][k] =  str(dataToSend[key][k])
-
-    logging.info(dataToSend)
-
-    response = requests.post('https://45.55.161.5:8088/services/collector/event', headers=headers, data=json.dumps({"event": {"data": dataToSend}}), verify=False)
-
-    logging.info(response.status_code)
-    logging.info(response.text)
     
+    try:
+        es = Elasticsearch(
+            ['45.55.161.5'],
+            port=9200,
+            http_auth=('elastic', 'amsdkasdo21gsdP')
+        )
+
+        for i in dataToSend:
+            res = es.index(index='jobs', doc_type='job', body=i)
+            logging.info("Response from splunk")
+            logging.info(res)
+    except Exception,e:
+        logging.error("There was some error sending data to Splunk")
+        logging.error(e)
+    
+    logging.info("sendSplunk() ends")
     
     
 
@@ -439,7 +452,7 @@ class EverjobsSpider(scrapy.Spider):
                     data['phones']=cleaned_mobiles
 
                 if 'companyURL' in data and data['companyURL'] is not None:
-                    yield Request(url=data['companyURL'], callback=self.parse_company_page, headers=self.headers, meta={'data': data})
+                    yield Request(url=data['companyURL'], callback=self.parse_company_page, headers=self.headers, meta={'data': data}, dont_filter=True)
                 else:
                     self.all_jobs_scraped_this_run[data['jobUrl']] = data
                     yield self.all_jobs_scraped_this_run[data['jobUrl']]
@@ -645,7 +658,7 @@ class BongthomSpider(scrapy.Spider):
                 
                 # scrape company website if it is not on the job detail lpage
                 if 'companyURL' in pos and ('companyWebsite' not in pos or pos['companyWebsite'] is None):
-                    yield Request(url=pos['companyURL'], callback=self.parse_company_page, headers=self.headers, meta={'all_jobs_this_page': all_jobs_this_page})
+                    yield Request(url=pos['companyURL'], callback=self.parse_company_page, headers=self.headers, meta={'all_jobs_this_page': all_jobs_this_page}, dont_filter=True)
                     break # break out of here ... all jobs scraped from this job detail pge will be Yielded from parse_company_page function
 
                 self.all_jobs_scraped_this_run[job_id] = pos
@@ -882,14 +895,13 @@ class PelprekSpider(scrapy.Spider):
                                 logging.info("%s "%(jobLink))
 
                                 yield Request(url=jobLink, callback=self.parse_detail_page, headers=self.headers)
-
+                            
                         self.page = self.page + 1 
                         url = '%s/?page=%s'%(self.baseUrl, str(self.page))
                         logging.info("\n\n\nGoing to next page: %s"%(url))
                         yield Request(url, callback=self.parse_listing_page, headers=self.headers, cookies=self.cookies)
 
                 else:
-
                         logging.info("%s was last page"%(response.url))
 
                         
@@ -991,7 +1003,7 @@ class PelprekSpider(scrapy.Spider):
 
                
                 if 'companyURL' in data and data['companyURL'] is not None:
-                    yield Request(url=data['companyURL'], callback=self.parse_company_page, headers=self.headers, meta={'data': data})
+                    yield Request(url=data['companyURL'], callback=self.parse_company_page, headers=self.headers, meta={'data': data}, dont_filter=True)
                 else:
                     self.all_jobs_scraped_this_run[data['jobUrl']] = data
                     yield self.all_jobs_scraped_this_run[data['jobUrl']]

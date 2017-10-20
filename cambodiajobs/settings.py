@@ -16,3 +16,5 @@ DOWNLOADER_CLIENTCONTEXTFACTORY = 'cambodiajobs.context.CustomContextFactory'
 
 FEED_EXPORT_ENCODING = 'utf-8'
 FEED_FORMAT='json'
+
+DUPEFILTER_DEBUG = True
